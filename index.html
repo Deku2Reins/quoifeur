@@ -341,36 +341,80 @@ input::placeholder{color:var(--muted2)}
 // ══════════ STATE ══════════
 const ST = {
   pseudo:'', code:'', myId:'', isHost:false, players:[],
-  phase:'waiting', // waiting | countdown | quoi | result | final
+  // données Firebase (minimales)
+  phase:'waiting',   // waiting | starting | quoi | result | final
   round:1, totalRounds:5,
-  quoiAt:null,       // timestamp quand QUOI est apparu (host side)
-  clicks:{},         // {playerId: timestamp}
-  roundResults:[],   // [{id,pseudo,ms}] classement du round
-  scores:{},         // {playerId: points cumulés}
-  hasClicked:false,  // côté client : a-t-on déjà cliqué ce round ?
-  countdownVal:null, // 3,2,1 (phase pre-quoi)
+  quoiAt:null,       // timestamp serveur quand QUOI apparaît
+  clicks:{},         // {playerId: ms_depuis_quoiAt} — temps relatifs
+  roundResults:[],
+  scores:{},
 };
 
-let _fbUnlisten=null, syncTmr=null, lastCache='';
-let _hostQuoiTimer=null, _hostCdTimer=null;
-let _localPhase=''; // pour éviter re-render inutile
+// état local uniquement (jamais pushé sur Firebase)
+let _localPhase='waiting'; // phase affichée localement
+let _localCd=0;            // compte à rebours local
+let _cdInterval=null;      // setInterval countdown local
+let _hasClicked=false;     // a-t-on cliqué ce round ?
+let _quoiAtLocal=null;     // quoiAt reçu, sauvegardé localement
+
+let _fbUnlisten=null, _heartbeat=null;
+let _hostDelayTimer=null, _hostEndTimer=null;
+let lastCache='';
 
 const uid=()=>Math.random().toString(36).slice(2,10);
 const code5=()=>{const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';return Array.from({length:5},()=>c[Math.floor(Math.random()*c.length)]).join('');};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-function cleanForFB(obj){return JSON.parse(JSON.stringify(obj,(k,v)=>v===undefined?null:v));}
-function setRD(d){if(!ST.code)return;lastCache=JSON.stringify(d);window._fbSet(ST.code,cleanForFB(d)).catch(e=>console.error('setRD',e));}
+function cleanForFB(o){return JSON.parse(JSON.stringify(o,(k,v)=>v===undefined?null:v));}
+
+// ── Écriture Firebase minimale : on ne pousse QUE ce qui change vraiment ──
+function fbPush(data){
+  if(!ST.code)return;
+  window._fbSet(ST.code,cleanForFB(data)).catch(e=>console.error(e));
+  lastCache=JSON.stringify(data);
+}
 function buildRD(){
   return{
-    code:ST.code, players:ST.players,
-    phase:ST.phase, round:ST.round, totalRounds:ST.totalRounds,
-    quoiAt:ST.quoiAt, clicks:ST.clicks,
-    roundResults:ST.roundResults, scores:ST.scores,
-    ts:Date.now()
+    players:ST.players, phase:ST.phase, round:ST.round,
+    totalRounds:ST.totalRounds, quoiAt:ST.quoiAt,
+    clicks:ST.clicks, roundResults:ST.roundResults, scores:ST.scores,
   };
 }
-function applyRD(d){
-  if(!d)return;
+
+// ══════════ SYNC FIREBASE ══════════
+function startSync(){
+  stopSync();
+  // heartbeat léger toutes les 4s : juste le lastSeen du joueur
+  _heartbeat=setInterval(()=>{
+    if(!ST.code||!lastCache)return;
+    const d=JSON.parse(lastCache);
+    const p=d.players&&d.players.find(x=>x.id===ST.myId);
+    if(p){p.lastSeen=Date.now();p.online=true;}
+    window._fbSet(ST.code,cleanForFB(d)).catch(()=>{});
+    lastCache=JSON.stringify(d);
+  },4000);
+
+  // listener Firebase : reçoit les events hôte
+  _fbUnlisten=window._fbListen(ST.code,d=>{
+    if(!d)return;
+    const s=JSON.stringify(d);
+    if(s===lastCache)return;
+    lastCache=s;
+    onServerUpdate(d);
+  });
+}
+function stopSync(){
+  if(_fbUnlisten){_fbUnlisten();_fbUnlisten=null;}
+  clearInterval(_heartbeat);_heartbeat=null;
+  clearTimeout(_hostDelayTimer);clearTimeout(_hostEndTimer);
+  stopLocalCountdown();
+}
+
+// ══════════ RÉCEPTION UPDATE SERVEUR ══════════
+function onServerUpdate(d){
+  const prevPhase=ST.phase;
+  const prevRound=ST.round;
+
   ST.players=d.players||[];
   ST.phase=d.phase||'waiting';
   ST.round=d.round||1;
@@ -379,24 +423,11 @@ function applyRD(d){
   ST.clicks=d.clicks||{};
   ST.roundResults=d.roundResults||[];
   ST.scores=d.scores||{};
-}
-function startSync(){
-  if(_fbUnlisten){_fbUnlisten();_fbUnlisten=null;}
-  if(syncTmr){clearInterval(syncTmr);syncTmr=null;}
-  // heartbeat
-  syncTmr=setInterval(()=>{
-    if(!ST.code)return;
-    const cached=lastCache?JSON.parse(lastCache):null;
-    if(!cached)return;
-    const p=cached.players&&cached.players.find(x=>x.id===ST.myId);
-    if(p){p.lastSeen=Date.now();p.online=true;}
-    window._fbSet(ST.code,cleanForFB(cached)).catch(()=>{});
-  },3000);
-  _fbUnlisten=window._fbListen(ST.code,(d)=>{
-    if(!d)return;
-    const s=JSON.stringify(d);
-    if(s!==lastCache){lastCache=s;applyRD(d);dispatch();}
-  });
+
+  // changement de round → reset clic local
+  if(ST.round!==prevRound)_hasClicked=false;
+
+  dispatch(prevPhase);
 }
 
 // ══════════ TOAST / SHOW ══════════
@@ -409,23 +440,273 @@ function show(id){
 }
 
 // ══════════ DISPATCH ══════════
-function dispatch(){
-  if(!ST.game && ST.phase==='waiting' && !ST.code){show('home');return;}
-  if(!ST.code){return;}
+function dispatch(prevPhase){
+  if(!ST.code)return;
 
-  // check expelled
+  // expulsé ?
   const me=ST.players.find(p=>p.id===ST.myId);
-  if(!me&&!ST.isHost&&ST.code){cleanup();show('expelled');return;}
+  if(!me&&!ST.isHost){cleanup();show('expelled');return;}
 
-  if(ST.phase==='waiting'){
-    show('waiting');renderWaiting();return;
-  }
-  // jeu en cours
+  if(ST.phase==='waiting'){show('waiting');renderWaiting();return;}
+
+  // écran jeu
   show('game');
   document.getElementById('g-round').textContent=ST.round;
   document.getElementById('g-totalrounds').textContent=ST.totalRounds;
   document.getElementById('g-pseudo').textContent=ST.pseudo;
-  renderGame();
+
+  if(ST.phase==='starting'){
+    // L'hôte a lancé → tous les clients font leur propre countdown local
+    if(_localPhase!=='starting'||ST.round!==(prevPhase==='starting'?ST.round:ST.round-1)){
+      _localPhase='starting';
+      startLocalCountdown();
+    }
+    return;
+  }
+
+  if(ST.phase==='quoi'){
+    // QUOI est arrivé depuis Firebase — on mémorise le timestamp
+    _quoiAtLocal=ST.quoiAt;
+    _localPhase='quoi';
+    stopLocalCountdown();
+    renderQuoi();
+    return;
+  }
+
+  if(ST.phase==='result'){
+    _localPhase='result';
+    stopLocalCountdown();
+    renderResult();
+    return;
+  }
+
+  if(ST.phase==='final'){
+    _localPhase='final';
+    stopLocalCountdown();
+    renderFinal();
+    return;
+  }
+}
+
+// ══════════ COUNTDOWN LOCAL ══════════
+// Chaque client gère son propre 3-2-1 sans toucher Firebase
+function startLocalCountdown(){
+  stopLocalCountdown();
+  _localCd=3;
+  renderCountdown(_localCd);
+  _cdInterval=setInterval(()=>{
+    _localCd--;
+    if(_localCd>0){renderCountdown(_localCd);}
+    else{
+      stopLocalCountdown();
+      _localPhase='tension';
+      renderTension();
+      // timeout de sécurité : si QUOI n'arrive pas en 12s, afficher "bug réseau"
+    }
+  },1000);
+}
+function stopLocalCountdown(){clearInterval(_cdInterval);_cdInterval=null;}
+
+function renderCountdown(n){
+  const gc=document.getElementById('game-content');if(!gc)return;
+  gc.innerHTML=`
+    <div class="wait-zone">
+      <div style="font-family:'Syne',sans-serif;font-size:clamp(5rem,25vw,10rem);font-weight:900;color:var(--cyan);line-height:1;animation:qappear .12s ease-out">${n}</div>
+      <div class="wait-msg">Préparez-vous…</div>
+    </div>`;
+}
+function renderTension(){
+  const gc=document.getElementById('game-content');if(!gc)return;
+  gc.innerHTML=`
+    <div class="wait-zone">
+      <div class="wait-msg">Restez concentrés…</div>
+      <div class="wait-dots">
+        <div class="wait-dot"></div><div class="wait-dot"></div><div class="wait-dot"></div>
+      </div>
+      ${renderScoreMini()}
+    </div>`;
+}
+function renderQuoi(){
+  const gc=document.getElementById('game-content');if(!gc)return;
+  gc.innerHTML=`
+    <div class="quoi-zone">
+      <div class="quoi-word">QUOI ?</div>
+      ${_hasClicked
+        ? `<div class="delay-zone"><div class="delay-chip">✅ Cliqué !</div></div>`
+        : `<button class="feur-btn" id="feur-btn" onclick="handleFeur(event)">FEUR !</button>`
+      }
+    </div>`;
+}
+function renderResult(){
+  const gc=document.getElementById('game-content');if(!gc)return;
+  const results=Array.isArray(ST.roundResults)?ST.roundResults:[];
+  const winner=results[0];
+  gc.innerHTML=`
+    <div class="result-zone">
+      ${winner
+        ? `<div class="winner-label">🏆 Le plus rapide du round ${ST.round}</div>
+           <div class="winner-name">${esc(winner.pseudo||'?')}</div>
+           <div class="winner-time">${winner.ms} ms</div>`
+        : `<div class="winner-label" style="font-size:1.1rem">Personne n'a cliqué 😴</div>`
+      }
+      <div class="podium-list mt2">
+        ${results.map((r,i)=>`
+          <div class="podium-row ${i===0?'first':''}">
+            <div class="podium-rank">${['🥇','🥈','🥉'][i]||i+1+'.'}</div>
+            <div class="podium-name">${esc(r.pseudo||'?')}</div>
+            <div class="podium-time">${r.ms} ms</div>
+            <div class="podium-pts">+${Math.max(0,ST.players.length-i)} pts</div>
+          </div>`).join('')}
+      </div>
+      <div class="tm mt2">${ST.round<ST.totalRounds?'Prochain round dans quelques secondes…':'Calcul des scores finals…'}</div>
+    </div>`;
+}
+function renderFinal(){
+  const gc=document.getElementById('game-content');if(!gc)return;
+  const sorted=Object.entries(ST.scores)
+    .map(([id,pts])=>{const p=ST.players.find(x=>x.id===id);return{id,pseudo:p?p.pseudo:'?',pts};})
+    .sort((a,b)=>b.pts-a.pts);
+  const winner=sorted[0];
+  gc.innerHTML=`
+    <div class="result-zone">
+      <div class="trophy-zone">
+        <div class="trophy-em">🏆</div>
+        <div class="trophy-title">${winner?esc(winner.pseudo):'???'}</div>
+        <div class="trophy-sub">gagne la partie avec ${winner?winner.pts:0} point${winner&&winner.pts>1?'s':''}</div>
+      </div>
+      <div class="podium-list">
+        ${sorted.map((r,i)=>`
+          <div class="podium-row ${i===0?'first':''}">
+            <div class="podium-rank">${['🥇','🥈','🥉'][i]||i+1+'.'}</div>
+            <div class="podium-name">${esc(r.pseudo)}</div>
+            <div class="podium-pts">${r.pts} pts</div>
+          </div>`).join('')}
+      </div>
+      ${ST.isHost
+        ?`<div class="mt3" style="width:100%;max-width:420px"><button class="btn btn-p" onclick="replayGame()">🔄 &nbsp;Rejouer</button></div>`
+        :`<div class="tm mt2">En attente de l'hôte…</div>`
+      }
+      <div class="mt2"><button class="btn btn-g btn-sm" style="width:auto" onclick="goHomeFromGame()">← Quitter</button></div>
+    </div>`;
+}
+function renderScoreMini(){
+  if(!ST.scores||!Object.keys(ST.scores).length)return '';
+  const sorted=Object.entries(ST.scores)
+    .map(([id,pts])=>{const p=ST.players.find(x=>x.id===id);return{pseudo:p?p.pseudo:'?',pts};})
+    .sort((a,b)=>b.pts-a.pts);
+  return `<div class="score-list mt3">${sorted.map(r=>`<div class="score-row"><div class="score-name">${esc(r.pseudo)}</div><div class="score-pts">${r.pts} pts</div></div>`).join('')}</div>`;
+}
+
+// ══════════ CLIC FEUR ══════════
+function handleFeur(e){
+  e.preventDefault();
+  if(ST.phase!=='quoi'||_hasClicked||!_quoiAtLocal)return;
+  _hasClicked=true;
+  const ms=Date.now()-_quoiAtLocal;
+
+  // feedback immédiat local
+  const btn=document.getElementById('feur-btn');
+  if(btn){btn.disabled=true;btn.textContent='✅ Cliqué !';}
+
+  // push uniquement MON clic sur Firebase (merge dans clicks)
+  // Pour éviter d'écraser les clics des autres : on lit le cache, on ajoute le sien, on repousse
+  const cached=lastCache?JSON.parse(lastCache):buildRD();
+  if(!cached.clicks)cached.clicks={};
+  cached.clicks[ST.myId]=ms;
+  lastCache=JSON.stringify(cached);
+  window._fbSet(ST.code,cleanForFB(cached)).catch(()=>{});
+
+  // Si c'est l'hôte, il vérifie aussi si tout le monde a cliqué
+  if(ST.isHost){
+    ST.clicks=cached.clicks;
+    checkAllClicked();
+  }
+}
+
+// ══════════ LOGIQUE HÔTE ══════════
+function launchGame(){
+  if(ST.players.length<2){toast('Il faut au moins 2 joueurs !');return;}
+  ST.scores={};
+  ST.players.forEach(p=>{ST.scores[p.id]=0;});
+  ST.round=1;ST.clicks={};ST.roundResults=[];ST.quoiAt=null;
+  _hasClicked=false;
+  startRound();
+}
+
+function startRound(){
+  ST.phase='starting';
+  ST.clicks={};
+  ST.quoiAt=null;
+  ST.roundResults=[];
+  const rd=buildRD();
+  lastCache=JSON.stringify(rd);
+  fbPush(rd);
+
+  // l'hôte attend 3s (countdown) + délai aléatoire avant QUOI
+  const delay=3000+1500+Math.random()*4500;
+  _hostDelayTimer=setTimeout(()=>{
+    if(!ST.isHost)return;
+    ST.phase='quoi';
+    ST.quoiAt=Date.now();
+    ST.clicks={};
+    const rd2=buildRD();
+    lastCache=JSON.stringify(rd2);
+    fbPush(rd2);
+    // timeout 8s si personne ne clique
+    _hostEndTimer=setTimeout(()=>{
+      if(ST.phase==='quoi')endRound();
+    },8000);
+  },delay);
+}
+
+function checkAllClicked(){
+  // appelé par l'hôte après chaque nouveau clic (y compris le sien)
+  const real=ST.players.filter(p=>p.online!==false);
+  if(real.every(p=>ST.clicks[p.id]!=null))endRound();
+}
+
+function endRound(){
+  clearTimeout(_hostEndTimer);
+  if(!ST.quoiAt||!Object.keys(ST.clicks).length){
+    ST.roundResults=[];
+  }else{
+    // Les clicks sont déjà en ms relatifs (Date.now() - quoiAt côté client)
+    // Mais l'hôte a aussi pushé quoiAt, donc on recalcule proprement
+    const results=Object.entries(ST.clicks)
+      .map(([id,ms])=>{
+        const p=ST.players.find(x=>x.id===id);
+        return{id,pseudo:p?p.pseudo:'?',ms:Math.max(0,ms)};
+      })
+      .sort((a,b)=>a.ms-b.ms);
+
+    const n=ST.players.length;
+    results.forEach((r,i)=>{
+      const pts=Math.max(0,n-i);
+      ST.scores[r.id]=(ST.scores[r.id]||0)+pts;
+    });
+    ST.roundResults=results;
+  }
+
+  ST.phase='result';
+  const rd=buildRD();lastCache=JSON.stringify(rd);fbPush(rd);
+
+  setTimeout(()=>{
+    if(ST.round>=ST.totalRounds){
+      ST.phase='final';
+      const rd2=buildRD();lastCache=JSON.stringify(rd2);fbPush(rd2);
+    }else{
+      ST.round++;
+      _hasClicked=false;
+      startRound();
+    }
+  },4000);
+}
+
+function replayGame(){
+  ST.scores={};
+  ST.players.forEach(p=>{ST.scores[p.id]=0;});
+  ST.round=1;ST.clicks={};ST.roundResults=[];ST.quoiAt=null;_hasClicked=false;
+  startRound();
 }
 
 // ══════════ HOME / LOBBY ══════════
@@ -433,9 +714,7 @@ function goHome(){show('home');}
 function goLobby(){
   const p=document.getElementById('inp-pseudo').value.trim();
   if(!p){toast('Entre ton pseudo !');return;}
-  ST.pseudo=p;
-  document.getElementById('lby-pseudo').textContent=p;
-  show('lobby');
+  ST.pseudo=p;document.getElementById('lby-pseudo').textContent=p;show('lobby');
 }
 function createRoom(){
   if(!window._fbSet){toast('Connexion en cours, réessaie dans 2s…');return;}
@@ -445,48 +724,40 @@ function createRoom(){
   ST.clicks={};ST.scores={};ST.roundResults=[];ST.quoiAt=null;
   const rd=buildRD();lastCache=JSON.stringify(rd);
   startSync();show('waiting');renderWaiting();
-  window._fbSet(ST.code,cleanForFB(rd)).catch(e=>toast('Erreur Firebase : '+e.message));
+  fbPush(rd);
 }
 function joinRoom(){
   if(!window._fbGet){toast('Connexion en cours, réessaie dans 2s…');return;}
   const c=document.getElementById('inp-code').value.trim().toUpperCase();
   if(c.length!==5){toast('Code de 5 caractères requis');return;}
-  toast('Connexion en cours…');
+  toast('Connexion…');
   window._fbGet(c).then(d=>{
     if(!d){toast('Room introuvable !');return;}
     ST.code=c;ST.isHost=false;
-    applyRD(d);
+    onServerUpdate(d);
     ST.myId=uid();
     ST.players.push({id:ST.myId,pseudo:ST.pseudo,isHost:false,online:true,lastSeen:Date.now()});
     const rd=buildRD();lastCache=JSON.stringify(rd);
-    startSync();dispatch();
-    window._fbSet(ST.code,cleanForFB(rd)).catch(()=>{});
+    startSync();show('waiting');renderWaiting();
+    fbPush(rd);
   }).catch(()=>toast('Erreur de connexion'));
 }
 function leaveRoom(){
   ST.players=ST.players.filter(p=>p.id!==ST.myId);
   if(ST.players.length>0){
-    if(ST.isHost&&ST.players.length>0){ST.players[0].isHost=true;}
-    setRD(buildRD());
-  }else{
-    if(ST.code)window._fbRemove(ST.code).catch(()=>{});
-  }
+    if(ST.isHost)ST.players[0].isHost=true;
+    fbPush(buildRD());
+  }else if(ST.code){window._fbRemove(ST.code).catch(()=>{});}
   cleanup();show('lobby');
 }
 function goHomeFromGame(){
-  leaveHelper();show('home');
-}
-function leaveHelper(){
   ST.players=ST.players.filter(p=>p.id!==ST.myId);
-  if(ST.players.length>0){setRD(buildRD());}
-  else if(ST.code)window._fbRemove(ST.code).catch(()=>{});
-  cleanup();
+  if(ST.players.length>0){fbPush(buildRD());}
+  else if(ST.code){window._fbRemove(ST.code).catch(()=>{});}
+  cleanup();show('home');
 }
 function cleanup(){
-  if(_fbUnlisten){_fbUnlisten();_fbUnlisten=null;}
-  clearInterval(syncTmr);syncTmr=null;
-  clearTimeout(_hostQuoiTimer);clearTimeout(_hostCdTimer);
-  ST.code='';
+  stopSync();ST.code='';_localPhase='waiting';_hasClicked=false;_quoiAtLocal=null;
 }
 function copyCode(){
   if(navigator.clipboard&&navigator.clipboard.writeText){
@@ -494,287 +765,32 @@ function copyCode(){
   }else{toast('Code : '+ST.code);}
 }
 
-// ══════════ WAITING SCREEN ══════════
+// ══════════ WAITING ══════════
 function renderWaiting(){
   document.getElementById('w-code').textContent=ST.code;
   document.getElementById('w-codisp').textContent=ST.code;
   document.getElementById('w-pseudo').textContent=ST.pseudo;
   document.getElementById('w-pcount').textContent=ST.players.length;
-
-  // chips joueurs
-  const plist=document.getElementById('w-plist');
-  plist.innerHTML=ST.players.map(p=>`
+  document.getElementById('w-plist').innerHTML=ST.players.map(p=>`
     <div class="pchip ${p.isHost?'host':''} ${p.online?'online':''}">
-      <div class="d"></div>
-      <span>${esc(p.pseudo)}${p.isHost?' 👑':''}</span>
+      <div class="d"></div><span>${esc(p.pseudo)}${p.isHost?' 👑':''}</span>
     </div>`).join('');
-
   if(ST.isHost){
     document.getElementById('host-cfg').style.display='';
     document.getElementById('guest-wait').style.display='none';
     document.getElementById('cfg-rounds').textContent=ST.totalRounds;
-    const canLaunch=ST.players.length>=2;
-    document.getElementById('launch-btn').disabled=!canLaunch;
-    document.getElementById('launch-hint').textContent=canLaunch?'':'Il faut au moins 2 joueurs';
-    document.getElementById('launch-hint').style.display=canLaunch?'none':'';
+    const ok=ST.players.length>=2;
+    document.getElementById('launch-btn').disabled=!ok;
+    document.getElementById('launch-hint').style.display=ok?'none':'';
   }else{
     document.getElementById('host-cfg').style.display='none';
     document.getElementById('guest-wait').style.display='';
   }
 }
-
 function changeRounds(delta){
   ST.totalRounds=Math.max(1,Math.min(20,ST.totalRounds+delta));
   document.getElementById('cfg-rounds').textContent=ST.totalRounds;
 }
-
-function launchGame(){
-  if(ST.players.length<2){toast('Il faut au moins 2 joueurs !');return;}
-  // init scores à 0
-  ST.scores={};
-  ST.players.forEach(p=>{ST.scores[p.id]=0;});
-  ST.round=1;
-  ST.clicks={};
-  ST.roundResults=[];
-  ST.quoiAt=null;
-  ST.hasClicked=false;
-  startRound();
-}
-
-// ══════════ LOGIQUE DE JEU (HOST) ══════════
-function startRound(){
-  ST.phase='countdown';
-  ST.clicks={};
-  ST.quoiAt=null;
-  ST.roundResults=[];
-  setRD(buildRD());
-  // countdown 3-2-1 puis délai aléatoire puis QUOI
-  let cd=3;
-  function tick(){
-    if(!ST.isHost)return;
-    if(cd>0){
-      ST.phase='countdown';
-      ST.quoiAt=cd; // réutilise quoiAt pour passer le compte à rebours
-      setRD(buildRD());
-      cd--;
-      _hostCdTimer=setTimeout(tick,1000);
-    }else{
-      // délai aléatoire 1.5 → 6s avant QUOI
-      const delay=1500+Math.random()*4500;
-      ST.phase='tension';
-      ST.quoiAt=null;
-      setRD(buildRD());
-      _hostQuoiTimer=setTimeout(()=>{
-        if(!ST.isHost)return;
-        ST.phase='quoi';
-        ST.quoiAt=Date.now();
-        ST.clicks={};
-        setRD(buildRD());
-        // timeout si personne clique en 8s
-        _hostQuoiTimer=setTimeout(()=>{
-          if(ST.phase==='quoi')endRound();
-        },8000);
-      },delay);
-    }
-  }
-  tick();
-}
-
-function registerClick(playerId){
-  // enregistrer le clic d'un joueur (depuis son appareil)
-  if(!ST.quoiAt)return;
-  if(ST.clicks[playerId])return; // déjà cliqué
-  const now=Date.now();
-  ST.clicks[playerId]=now;
-  setRD(buildRD());
-  // host vérifie si tous ont cliqué
-  if(ST.isHost){
-    const realPlayers=ST.players.filter(p=>p.online!==false);
-    const allClicked=realPlayers.every(p=>ST.clicks[p.id]);
-    if(allClicked)endRound();
-  }
-}
-
-function endRound(){
-  clearTimeout(_hostQuoiTimer);
-  if(!ST.quoiAt){
-    // personne n'a cliqué → round nul
-    ST.roundResults=[];
-    ST.phase='result';
-    setRD(buildRD());
-    scheduleNextRound();
-    return;
-  }
-  // calcul des temps
-  const times=Object.entries(ST.clicks)
-    .map(([id,ts])=>({id,ms:ts-ST.quoiAt}))
-    .filter(x=>x.ms>=0)
-    .sort((a,b)=>a.ms-b.ms);
-
-  // attribution points : 1er = n joueurs pts, 2e = n-1, ...
-  const n=ST.players.length;
-  times.forEach((t,i)=>{
-    const pts=Math.max(0,n-i);
-    ST.scores[t.id]=(ST.scores[t.id]||0)+pts;
-    const p=ST.players.find(pl=>pl.id===t.id);
-    t.pseudo=p?p.pseudo:'?';
-  });
-
-  ST.roundResults=times;
-  ST.phase='result';
-  setRD(buildRD());
-  scheduleNextRound();
-}
-
-function scheduleNextRound(){
-  if(!ST.isHost)return;
-  setTimeout(()=>{
-    if(ST.round>=ST.totalRounds){
-      ST.phase='final';
-      setRD(buildRD());
-    }else{
-      ST.round++;
-      ST.hasClicked=false;
-      startRound();
-    }
-  },4000);
-}
-
-// ══════════ RENDER JEU ══════════
-function renderGame(){
-  const gc=document.getElementById('game-content');
-  const ph=ST.phase;
-
-  if(ph==='countdown'){
-    const n=ST.quoiAt; // 3,2,1
-    gc.innerHTML=`
-      <div class="wait-zone">
-        <div style="font-family:'Syne',sans-serif;font-size:clamp(5rem,25vw,10rem);font-weight:900;color:var(--cyan);line-height:1;animation:qappear .15s ease-out">${n}</div>
-        <div class="wait-msg">Préparez-vous…</div>
-      </div>`;
-    return;
-  }
-
-  if(ph==='tension'){
-    gc.innerHTML=`
-      <div class="wait-zone">
-        <div class="wait-msg">Restez concentrés…</div>
-        <div class="wait-dots">
-          <div class="wait-dot"></div>
-          <div class="wait-dot"></div>
-          <div class="wait-dot"></div>
-        </div>
-        ${renderScoreMini()}
-      </div>`;
-    return;
-  }
-
-  if(ph==='quoi'){
-    const me=ST.players.find(p=>p.id===ST.myId);
-    const iClicked=!!(ST.clicks&&ST.clicks[ST.myId]);
-    gc.innerHTML=`
-      <div class="quoi-zone">
-        <div class="quoi-word">QUOI ?</div>
-        ${iClicked
-          ? `<div class="delay-zone"><div class="delay-chip">✅ Cliqué !</div></div>`
-          : `<button class="feur-btn" onclick="handleFeur(event)">FEUR !</button>`
-        }
-      </div>`;
-    return;
-  }
-
-  if(ph==='result'){
-    const results=Array.isArray(ST.roundResults)?ST.roundResults:[];
-    const winner=results[0];
-    gc.innerHTML=`
-      <div class="result-zone">
-        ${winner
-          ? `<div class="winner-label">🏆 Le plus rapide du round ${ST.round}</div>
-             <div class="winner-name">${esc(winner.pseudo||'?')}</div>
-             <div class="winner-time">${winner.ms} ms</div>`
-          : `<div class="winner-label" style="font-size:1.1rem">Personne n'a cliqué ! 😴</div>`
-        }
-        <div class="podium-list mt2">
-          ${results.map((r,i)=>`
-            <div class="podium-row ${i===0?'first':''}">
-              <div class="podium-rank">${['🥇','🥈','🥉'][i]||i+1+'.'}</div>
-              <div class="podium-name">${esc(r.pseudo||'?')}</div>
-              <div class="podium-time">${r.ms} ms</div>
-              <div class="podium-pts">+${Math.max(0,ST.players.length-i)} pts</div>
-            </div>`).join('')}
-        </div>
-        <div class="tm mt2" style="animation:dl 1s infinite">${ST.round<ST.totalRounds?'Prochain round dans quelques secondes…':'Calcul des scores finals…'}</div>
-      </div>`;
-    return;
-  }
-
-  if(ph==='final'){
-    // classement final
-    const sorted=Object.entries(ST.scores)
-      .map(([id,pts])=>{const p=ST.players.find(x=>x.id===id);return{id,pseudo:p?p.pseudo:'?',pts};})
-      .sort((a,b)=>b.pts-a.pts);
-    const winner=sorted[0];
-    gc.innerHTML=`
-      <div class="result-zone">
-        <div class="trophy-zone">
-          <div class="trophy-em">🏆</div>
-          <div class="trophy-title">${winner?esc(winner.pseudo):'???'}</div>
-          <div class="trophy-sub">gagne la partie avec ${winner?winner.pts:0} points</div>
-        </div>
-        <div class="podium-list">
-          ${sorted.map((r,i)=>`
-            <div class="podium-row ${i===0?'first':''}">
-              <div class="podium-rank">${['🥇','🥈','🥉'][i]||i+1+'.'}</div>
-              <div class="podium-name">${esc(r.pseudo)}</div>
-              <div class="podium-pts">${r.pts} pts</div>
-            </div>`).join('')}
-        </div>
-        ${ST.isHost?`<div class="mt3" style="width:100%;max-width:420px"><button class="btn btn-p" onclick="replayGame()">🔄 &nbsp;Rejouer</button></div>`:'<div class="tm mt2">En attente de l\'hôte…</div>'}
-        <div class="mt2"><button class="btn btn-g btn-sm" style="width:auto" onclick="goHomeFromGame()">← Quitter</button></div>
-      </div>`;
-    return;
-  }
-}
-
-function renderScoreMini(){
-  if(!ST.scores||Object.keys(ST.scores).length===0)return '';
-  const sorted=Object.entries(ST.scores)
-    .map(([id,pts])=>{const p=ST.players.find(x=>x.id===id);return{pseudo:p?p.pseudo:'?',pts};})
-    .sort((a,b)=>b.pts-a.pts);
-  return `<div class="score-list mt3">
-    ${sorted.map(r=>`<div class="score-row"><div class="score-name">${esc(r.pseudo)}</div><div class="score-pts">${r.pts} pts</div></div>`).join('')}
-  </div>`;
-}
-
-function handleFeur(e){
-  e.preventDefault();
-  if(ST.phase!=='quoi')return;
-  if(ST.clicks&&ST.clicks[ST.myId])return; // déjà cliqué
-  // enregistrement local optimiste
-  const now=Date.now();
-  if(!ST.clicks)ST.clicks={};
-  ST.clicks[ST.myId]=now;
-  // push Firebase
-  if(!ST.quoiAt)return;
-  const rd=buildRD();
-  lastCache=JSON.stringify(rd);
-  window._fbSet(ST.code,cleanForFB(rd)).catch(()=>{});
-  renderGame(); // feedback immédiat
-  // si host, vérifier si tout le monde a cliqué
-  if(ST.isHost){
-    const real=ST.players.filter(p=>p.online!==false);
-    if(real.every(p=>ST.clicks[p.id]))endRound();
-  }
-}
-
-function replayGame(){
-  ST.scores={};
-  ST.players.forEach(p=>{ST.scores[p.id]=0;});
-  ST.round=1;ST.clicks={};ST.roundResults=[];ST.quoiAt=null;ST.hasClicked=false;
-  startRound();
-}
-
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 </script>
 </body>
 </html>
