@@ -415,6 +415,24 @@ function onServerUpdate(d){
   const prevPhase=ST.phase;
   const prevRound=ST.round;
 
+  if(ST.isHost){
+    // L'hôte est source de vérité pour les phases, mais lit les joueurs ET les clics depuis Firebase
+    ST.players=d.players||[];
+    if(ST.phase==='waiting'){
+      renderWaiting();
+    } else if(ST.phase==='quoi'){
+      // récupérer les clics des guests
+      const incoming=d.clicks||{};
+      let newClick=false;
+      Object.entries(incoming).forEach(([id,ms])=>{
+        if(!ST.clicks[id]){ST.clicks[id]=ms;newClick=true;}
+      });
+      if(newClick)checkAllClicked();
+    }
+    return;
+  }
+
+  // Guest : applique tout ce que l'hôte envoie
   ST.players=d.players||[];
   ST.phase=d.phase||'waiting';
   ST.round=d.round||1;
@@ -424,7 +442,6 @@ function onServerUpdate(d){
   ST.roundResults=d.roundResults||[];
   ST.scores=d.scores||{};
 
-  // changement de round → reset clic local
   if(ST.round!==prevRound)_hasClicked=false;
 
   dispatch(prevPhase);
@@ -660,9 +677,9 @@ function startRound(){
 }
 
 function checkAllClicked(){
-  // appelé par l'hôte après chaque nouveau clic (y compris le sien)
+  // appelé par l'hôte après chaque nouveau clic reçu de Firebase
   const real=ST.players.filter(p=>p.online!==false);
-  if(real.every(p=>ST.clicks[p.id]!=null))endRound();
+  if(real.length>0&&real.every(p=>ST.clicks[p.id]!=null))endRound();
 }
 
 function endRound(){
