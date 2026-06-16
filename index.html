@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QUOI ? — Le jeu de réactivité</title>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, update, onValue, get, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  const firebaseConfig = {
+    apiKey: "AIzaSyCED7Y1jL7h5DoKOexArZNiB7PgOaSY6KA",
+    authDomain: "quoifeur-5c9ff.firebaseapp.com",
+    databaseURL: "https://quoifeur-5c9ff-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "quoifeur-5c9ff",
+    storageBucket: "quoifeur-5c9ff.firebasestorage.app",
+    messagingSenderId: "831258610817",
+    appId: "1:831258610817:web:f9156d96c28493af821180"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const R = code => ref(db, 'rooms/' + code);
+  window._fb = {
+    set:    (code, data)    => set(R(code), data),
+    get:    (code)          => get(R(code)).then(s => s.val()),
+    remove: (code)          => remove(R(code)),
+    listen: (code, cb)      => onValue(R(code), snap => cb(snap.val())),
+    update: (code, partial) => {
+      const u = {};
+      Object.entries(partial).forEach(([k,v]) => { u['rooms/'+code+'/'+k] = v; });
+      return update(ref(db), u);
+    },
+  };
+  document.dispatchEvent(new Event('fb-ready'));
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800;900&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#06080a;--s1:#0c1015;--s2:#121820;--s3:#18202a;
+  --b0:rgba(0,200,255,.10);--b1:rgba(0,200,255,.28);--b2:rgba(255,255,255,.07);
+  --text:#eef4f8;--muted:#6a8899;--muted2:#4a6070;
+  --cyan:#00c8ff;--rose:#ff2d6e;--yellow:#ffe033;
+  --cs:rgba(0,200,255,.10);--rs:rgba(255,45,110,.15);
+  --r:16px;--rsm:10px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;line-height:1.5}
+body.noscroll{overflow:hidden;height:100vh}
+.glow{position:fixed;border-radius:50%;pointer-events:none;z-index:0}
+#g1{width:800px;height:800px;background:radial-gradient(circle,#00c8ff 0%,transparent 70%);opacity:.06;top:-350px;right:-250px}
+#g2{width:600px;height:600px;background:radial-gradient(circle,#ff2d6e 0%,transparent 70%);opacity:.06;bottom:-250px;left:-200px}
+.screen{display:none;position:relative;z-index:1}
+.screen.active{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;height:100vh;overflow:hidden;padding:2rem 1.25rem}
+.page{display:none;flex-direction:column;height:100vh;overflow:hidden;position:relative;z-index:1}
+.page.active{display:flex}
+.card{background:var(--s1);border:1px solid var(--b0);border-radius:var(--r);padding:2rem;width:100%;max-width:460px;position:relative}
+.card::before{content:'';position:absolute;inset:0;border-radius:var(--r);background:linear-gradient(135deg,rgba(0,200,255,.04) 0%,transparent 50%);pointer-events:none}
+.cw{max-width:640px}
+.logo{font-family:'Syne',sans-serif;font-size:3rem;font-weight:900;letter-spacing:-.05em;line-height:1;color:var(--cyan);text-shadow:0 0 40px rgba(0,200,255,.4)}
+.logo-q{color:var(--rose)}
+.tagline{color:var(--muted);font-size:.9rem;margin-bottom:2.5rem;text-align:center}
+.field{margin-bottom:1.25rem}
+.field label{font-size:.72rem;color:var(--muted);display:block;margin-bottom:.45rem;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.slabel{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted2);font-weight:700;margin-bottom:.6rem}
+input[type=text]{width:100%;background:var(--s2);border:1px solid var(--b2);border-radius:var(--rsm);color:var(--text);font-family:'DM Sans',sans-serif;font-size:1rem;padding:.8rem 1rem;outline:none;transition:border-color .2s,box-shadow .2s}
+input[type=text]:focus{border-color:var(--cyan);box-shadow:0 0 0 3px var(--cs)}
+input::placeholder{color:var(--muted2)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;padding:.82rem 1.5rem;border-radius:var(--rsm);border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:.95rem;font-weight:600;transition:all .15s;text-align:center;width:100%}
+.btn-p{background:var(--cyan);color:#001a22;box-shadow:0 4px 22px rgba(0,200,255,.3)}
+.btn-p:hover{background:#22d8ff;transform:translateY(-1px)}
+.btn-p:active{transform:translateY(0)}
+.btn-p:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-o{background:transparent;border:1px solid var(--b1);color:var(--text)}
+.btn-o:hover{border-color:var(--cyan);color:var(--cyan)}
+.btn-g{background:var(--s2);border:1px solid var(--b2);color:var(--muted)}
+.btn-g:hover{background:var(--s3);color:var(--text)}
+.btn-sm{padding:.5rem 1rem;font-size:.82rem;width:auto}
+.btn-row{display:flex;gap:.75rem}
+.btn-row .btn{flex:1}
+.divider{display:flex;align-items:center;gap:.85rem;margin:1.5rem 0;color:var(--muted2);font-size:.8rem}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--b2)}
+.topbar{display:flex;align-items:center;gap:.75rem;padding:.9rem 1.5rem;border-bottom:1px solid var(--b0);background:rgba(6,8,10,.9);backdrop-filter:blur(12px);position:sticky;top:0;z-index:20;flex-shrink:0}
+.t-home{font-family:'Syne',sans-serif;font-weight:800;font-size:1rem;cursor:pointer;flex-shrink:0}
+.t-home .q{color:var(--rose)}.t-home .f{color:var(--cyan)}
+.t-right{display:flex;align-items:center;gap:.65rem;margin-left:auto;flex-shrink:0}
+.rpill{background:var(--s2);border:1px solid var(--b0);border-radius:999px;padding:.28rem .85rem;font-size:.75rem;color:var(--muted);font-family:'Syne',sans-serif;font-weight:700;letter-spacing:.1em;white-space:nowrap}
+.rpill span{color:var(--cyan)}
+.tpseudo{font-size:.8rem;color:var(--muted);max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plist{display:flex;flex-wrap:wrap;gap:.45rem;margin:.75rem 0 1rem}
+.pchip{display:flex;align-items:center;gap:.4rem;background:var(--s2);border:1px solid var(--b2);border-radius:999px;padding:.32rem .85rem;font-size:.82rem}
+.pchip.host{border-color:rgba(0,200,255,.35)}
+.pd{width:7px;height:7px;border-radius:50%;background:var(--muted2);flex-shrink:0}
+.pchip.host .pd{background:var(--cyan)}
+.gbody{flex:1;display:flex;flex-direction:column;align-items:center;padding:1.75rem 1.25rem 5rem;overflow-y:auto}
+.ginner{width:100%;max-width:560px}
+.gwait{text-align:center;padding:1.5rem;background:var(--s2);border:1px solid var(--b2);border-radius:var(--r);margin-top:1.25rem}
+.codisp{font-family:'Syne',sans-serif;font-weight:800;font-size:2.8rem;letter-spacing:.2em;color:var(--cyan);line-height:1}
+.rounds-picker{display:flex;align-items:center;gap:1rem;margin-top:.5rem}
+.rounds-val{font-family:'Syne',sans-serif;font-size:2.4rem;font-weight:800;color:var(--cyan);min-width:48px;text-align:center}
+.rounds-btn{background:var(--s2);border:1px solid var(--b2);border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:1.2rem;color:var(--text);transition:all .15s;flex-shrink:0;user-select:none}
+.rounds-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.dl{display:flex;gap:5px;justify-content:center;margin-top:1rem}
+.dl span{width:6px;height:6px;border-radius:50%;animation:dlanim .9s infinite}
+.dl span:nth-child(1){background:var(--cyan)}
+.dl span:nth-child(2){background:var(--rose);animation-delay:.18s}
+.dl span:nth-child(3){background:var(--yellow);animation-delay:.36s}
+@keyframes dlanim{0%,100%{opacity:.25;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+/* jeu */
+.game-zone{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:2rem;gap:1.5rem}
+.cd-num{font-family:'Syne',sans-serif;font-size:clamp(5rem,25vw,10rem);font-weight:900;color:var(--cyan);line-height:1;animation:pop .12s ease-out}
+@keyframes pop{from{transform:scale(1.2);opacity:0}to{transform:scale(1);opacity:1}}
+.tension-msg{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.wait-dots{display:flex;gap:10px}
+.wd{width:10px;height:10px;border-radius:50%;background:var(--b1);animation:wdanim 1.4s infinite}
+.wd:nth-child(2){animation-delay:.2s}.wd:nth-child(3){animation-delay:.4s}
+@keyframes wdanim{0%,80%,100%{transform:scale(.6);opacity:.3}40%{transform:scale(1);opacity:1;background:var(--cyan)}}
+.quoi-word{font-family:'Syne',sans-serif;font-size:clamp(4rem,18vw,8rem);font-weight:900;color:var(--yellow);letter-spacing:-.04em;line-height:1;text-shadow:0 0 60px rgba(255,224,51,.5);animation:pop .1s ease-out}
+.feur-btn{font-family:'Syne',sans-serif;font-weight:900;font-size:clamp(2rem,9vw,3.5rem);background:var(--rose);color:#fff;border:none;border-radius:20px;padding:1.2rem 2.5rem;cursor:pointer;letter-spacing:-.02em;box-shadow:0 8px 40px rgba(255,45,110,.5);transition:transform .08s,box-shadow .08s;user-select:none;-webkit-user-select:none;width:100%;max-width:420px}
+.feur-btn:active{transform:scale(.91);box-shadow:0 2px 16px rgba(255,45,110,.3)}
+.feur-done{font-size:1.1rem;color:var(--cyan);font-weight:600;background:var(--cs);border:1px solid var(--b1);border-radius:var(--rsm);padding:.85rem 1.5rem;text-align:center}
+.result-zone{display:flex;flex-direction:column;align-items:center;flex:1;padding:1.5rem;gap:1rem;overflow-y:auto}
+.winner-label{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;font-weight:600}
+.winner-name{font-family:'Syne',sans-serif;font-size:clamp(2rem,10vw,4rem);font-weight:900;color:var(--cyan);letter-spacing:-.03em;text-align:center;line-height:1.1;animation:pop .2s ease-out}
+.winner-time{font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:700;color:var(--yellow)}
+.podium{width:100%;max-width:420px;display:flex;flex-direction:column;gap:.5rem}
+.prow{display:flex;align-items:center;gap:.75rem;background:var(--s1);border:1px solid var(--b2);border-radius:var(--rsm);padding:.65rem 1rem;font-size:.9rem}
+.prow.first{border-color:var(--b1);background:rgba(0,200,255,.07)}
+.prank{font-family:'Syne',sans-serif;font-weight:800;min-width:28px;color:var(--muted)}
+.prow.first .prank{color:var(--cyan)}
+.pname{flex:1;font-weight:600}
+.ptime{font-family:'Syne',sans-serif;font-size:.85rem;color:var(--muted);font-weight:700}
+.prow.first .ptime{color:var(--yellow)}
+.ppts{font-family:'Syne',sans-serif;font-size:.8rem;color:var(--cyan);font-weight:700;min-width:36px;text-align:right}
+.scores{width:100%;max-width:420px;display:flex;flex-direction:column;gap:.4rem}
+.srow{display:flex;align-items:center;justify-content:space-between;padding:.5rem .85rem;border-radius:var(--rsm);background:var(--s2);border:1px solid var(--b2);font-size:.85rem}
+.sname{flex:1;font-weight:500}
+.spts{font-family:'Syne',sans-serif;font-weight:800;font-size:.9rem;color:var(--cyan)}
+.trophy-em{font-size:4rem;animation:tropdrop .5s cubic-bezier(.34,1.56,.64,1)}
+@keyframes tropdrop{from{transform:translateY(-30px) scale(.7);opacity:0}to{transform:none;opacity:1}}
+.trophy-title{font-family:'Syne',sans-serif;font-size:1.8rem;font-weight:900;color:var(--yellow);letter-spacing:-.03em;text-align:center}
+.trophy-sub{font-size:.85rem;color:var(--muted);text-align:center}
+#toast{position:fixed;bottom:1.75rem;left:50%;transform:translateX(-50%) translateY(6px);background:var(--s3);border:1px solid var(--b1);border-radius:var(--rsm);padding:.6rem 1.25rem;font-size:.83rem;z-index:999;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;white-space:nowrap}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.tc{text-align:center}.tm{color:var(--muted);font-size:.85rem}
+.mt1{margin-top:.4rem}.mt2{margin-top:.75rem}.mt3{margin-top:1.25rem}
+.mb1{margin-bottom:.5rem}.mb2{margin-bottom:.75rem}.mb3{margin-bottom:1.25rem}
+.vs-footer{position:fixed;bottom:0;left:0;right:0;text-align:center;padding:.5rem;border-top:1px solid var(--b0);background:rgba(6,8,10,.92);z-index:10}
+.vs-footer a{font-size:.65rem;color:var(--muted2);text-decoration:none}
+@media(max-width:480px){.screen.active{padding:1.25rem .75rem}.card{padding:1.25rem}.topbar{padding:.7rem .85rem}.rpill{display:none}}
+@media(max-height:600px){.screen.active{justify-content:flex-start;padding-top:1rem;overflow-y:auto}}
+</style>
+</head>
+<body>
+<div class="glow" id="g1"></div><div class="glow" id="g2"></div>
+<div id="toast"></div>
+
+<!-- HOME -->
+<div id="screen-home" class="screen active">
+  <div class="tc" style="margin-bottom:2rem">
+    <div class="logo"><span class="logo-q">QUOI</span> ?</div>
+    <div style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;color:var(--cyan);margin-top:.3rem">FEUR.</div>
+    <div class="tagline mt2">Le jeu de réactivité entre potes 💨</div>
+  </div>
+  <div class="card">
+    <div class="field">
+      <label>Ton pseudo</label>
+      <input type="text" id="inp-pseudo" placeholder="Entre ton pseudo…" maxlength="20" autocomplete="off">
+    </div>
+    <button class="btn btn-p" onclick="goLobby()">C'est parti !</button>
+  </div>
+</div>
+
+<!-- LOBBY -->
+<div id="screen-lobby" class="screen">
+  <div class="tc" style="margin-bottom:2rem">
+    <div class="logo"><span class="logo-q">QUOI</span> ?</div>
+    <div class="tagline mt1">Crée ou rejoins une room</div>
+  </div>
+  <div class="card">
+    <div class="field" style="margin-bottom:1.5rem">
+      <div class="slabel">Connecté en tant que</div>
+      <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:1.2rem" id="lby-pseudo"></div>
+    </div>
+    <button class="btn btn-p" onclick="createRoom()">🏠 &nbsp;Créer une room</button>
+    <div class="divider">ou</div>
+    <div class="field">
+      <label>Code de la room</label>
+      <input type="text" id="inp-code" placeholder="Ex: A3K9M" maxlength="5"
+        style="text-transform:uppercase;letter-spacing:.25em;font-family:'Syne',sans-serif;font-weight:800;font-size:1.3rem;text-align:center" autocomplete="off">
+    </div>
+    <button class="btn btn-o" onclick="joinRoom()">🔗 &nbsp;Rejoindre la room</button>
+    <div class="mt3 tc"><button class="btn btn-g btn-sm" style="width:auto" onclick="show('home')">← Retour</button></div>
+  </div>
+</div>
+
+<!-- WAITING -->
+<div id="screen-waiting" class="page">
+  <div class="topbar">
+    <div class="t-home" onclick="goHomeFromGame()"><span class="q">QUOI</span><span class="f">?</span></div>
+    <div class="t-right">
+      <div class="rpill">Code : <span id="w-code">?????</span></div>
+      <div class="tpseudo" id="w-pseudo"></div>
+    </div>
+  </div>
+  <div class="gbody">
+    <div class="card cw" style="align-self:center">
+      <div class="mb3">
+        <div class="slabel mb1">Code de la room</div>
+        <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin-bottom:.75rem">
+          <div class="codisp" id="w-codisp">?????</div>
+          <button class="btn btn-g btn-sm" style="width:auto" onclick="copyCode()">📋 Copier</button>
+        </div>
+        <div class="tm">Partage ce code avec tes potes</div>
+      </div>
+      <div class="slabel">Joueurs (<span id="w-pcount">0</span>)</div>
+      <div class="plist" id="w-plist"></div>
+      <div id="host-cfg" style="display:none">
+        <div class="field mt2">
+          <label>Nombre de rounds</label>
+          <div class="rounds-picker">
+            <div class="rounds-btn" onclick="chgRounds(-1)">−</div>
+            <div class="rounds-val" id="cfg-rounds">5</div>
+            <div class="rounds-btn" onclick="chgRounds(1)">+</div>
+          </div>
+        </div>
+        <div class="mt3">
+          <button class="btn btn-p" id="launch-btn" onclick="launchGame()">🚀 &nbsp;Lancer le jeu</button>
+          <div class="tm mt1 tc" id="launch-hint" style="display:none">Il faut au moins 2 joueurs</div>
+        </div>
+      </div>
+      <div id="guest-wait" class="gwait" style="display:none">
+        <div class="tm">En attente que l'hôte lance le jeu…</div>
+        <div class="dl mt2"><span></span><span></span><span></span></div>
+      </div>
+      <div class="mt3 tc"><button class="btn btn-g btn-sm" style="width:auto" onclick="leaveRoom()">← Quitter</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- JEU -->
+<div id="screen-game" class="page">
+  <div class="topbar">
+    <div class="t-home" onclick="goHomeFromGame()"><span class="q">QUOI</span><span class="f">?</span></div>
+    <div class="t-right">
+      <div class="rpill">Round <span id="g-round">1</span>/<span id="g-total">5</span></div>
+      <div class="tpseudo" id="g-pseudo"></div>
+    </div>
+  </div>
+  <div id="gc" style="display:flex;flex-direction:column;flex:1;overflow:hidden"></div>
+</div>
+
+<!-- EXPELLED -->
+<div id="screen-expelled" class="screen">
+  <div class="card tc">
+    <div style="font-size:3rem;margin-bottom:1rem">🚫</div>
+    <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:1.4rem;margin-bottom:.5rem">Room terminée</div>
+    <div class="tm mb3">La partie est terminée ou tu as été déconnecté.</div>
+    <button class="btn btn-p" onclick="show('home')">← Retour à l'accueil</button>
+  </div>
+</div>
+
+<div class="vs-footer"><a href="https://claude.ai">Made with Claude.ai</a></div>
+
+<script>
+// ════════════════════════════════════════════════════
+// STATE — tout ce qui est partagé via Firebase
+// ════════════════════════════════════════════════════
+const S = {
+  // identité locale
+  pseudo:'', code:'', myId:'', isHost:false,
+  // état room (Firebase)
+  players:[],          // [{id, pseudo, isHost}]
+  phase:'waiting',     // waiting | starting | quoi | result | final
+  round:1, totalRounds:5,
+  quoiAt:0,            // timestamp (ms) quand QUOI a été déclenché par l'hôte
+  clicks:{},           // {playerId: ms} — temps de réaction de chaque joueur
+  roundResults:[],     // [{id, pseudo, ms}] triés
+  scores:{},           // {playerId: points cumulés}
+};
+
+// état local uniquement
+let _cd=0, _cdTmr=null;   // countdown local
+let _clicked=false;        // a-t-on cliqué ce round ?
+let _quoiAt=0;             // quoiAt reçu localement
+let _localPhase='';        // phase locale affichée
+
+// Firebase
+let _unlisten=null, _hb=null;
+let _hostQuoiTmr=null, _hostEndTmr=null;
+
+// ════════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════════
+const uid   = () => Math.random().toString(36).slice(2,10);
+const code5 = () => { const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; return Array.from({length:5},()=>c[Math.random()*c.length|0]).join(''); };
+const esc   = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clean = o => JSON.parse(JSON.stringify(o,(k,v)=>v===undefined?null:v));
+const fb    = () => window._fb;
+
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
+function show(id){
+  document.querySelectorAll('.screen,.page').forEach(el=>{el.classList.remove('active');el.style.display='none';});
+  const el=document.getElementById('screen-'+id);if(!el)return;
+  el.style.display='flex';el.classList.add('active');
+  document.body.classList.add('noscroll');
+}
+
+// ════════════════════════════════════════════════════
+// FIREBASE — lecture / écriture
+// ════════════════════════════════════════════════════
+
+// Construit l'objet room complet (pour push initial)
+function roomData(){
+  return clean({
+    players:S.players, phase:S.phase, round:S.round, totalRounds:S.totalRounds,
+    quoiAt:S.quoiAt, clicks:S.clicks, roundResults:S.roundResults, scores:S.scores,
+  });
+}
+
+function startListen(){
+  stopListen();
+  _unlisten = fb().listen(S.code, d => {
+    if(!d) return;
+    onRemote(d);
+  });
+  // heartbeat partiel : juste mon online toutes les 5s
+  _hb = setInterval(()=>{
+    if(!S.code) return;
+    const idx = S.players.findIndex(p=>p.id===S.myId);
+    if(idx>=0) fb().update(S.code,{['players/'+idx+'/online']:true,['players/'+idx+'/lastSeen']:Date.now()}).catch(()=>{});
+  },5000);
+}
+function stopListen(){
+  if(_unlisten){_unlisten();_unlisten=null;}
+  clearInterval(_hb);_hb=null;
+  clearTimeout(_hostQuoiTmr);clearTimeout(_hostEndTmr);
+  stopCd();
+}
+
+// ════════════════════════════════════════════════════
+// RÉCEPTION DONNÉES FIREBASE
+// ════════════════════════════════════════════════════
+function onRemote(d){
+  const prevPhase = S.phase;
+  const prevRound = S.round;
+
+  // Toujours mettre à jour la liste joueurs
+  S.players = d.players || [];
+
+  if(S.isHost){
+    // L'hôte est source de vérité — il ne lit que les joueurs et les clics des guests
+    if(S.phase==='waiting') renderWaiting();
+    if(S.phase==='quoi'){
+      // Récupérer les clics envoyés par les guests
+      const remote = d.clicks || {};
+      let newClick = false;
+      Object.entries(remote).forEach(([id,ms])=>{
+        if(id!==S.myId && S.clicks[id]==null){ S.clicks[id]=ms; newClick=true; }
+      });
+      if(newClick) checkAllClicked();
+    }
+    return;
+  }
+
+  // ── GUEST : on suit ce que l'hôte pousse ──
+  const newPhase = d.phase || 'waiting';
+  const newRound = d.round || 1;
+
+  S.phase = newPhase;
+  S.round = newRound;
+  S.totalRounds = d.totalRounds || 5;
+  S.quoiAt = d.quoiAt || 0;
+  S.clicks = d.clicks || {};
+  S.roundResults = d.roundResults || [];
+  S.scores = d.scores || {};
+
+  if(S.round !== prevRound) _clicked = false;
+
+  // Transitions de phase
+  if(newPhase === 'waiting'){ show('waiting'); renderWaiting(); return; }
+
+  show('game');
+  document.getElementById('g-round').textContent = S.round;
+  document.getElementById('g-total').textContent = S.totalRounds;
+  document.getElementById('g-pseudo').textContent = S.pseudo;
+
+  if(newPhase==='starting' && (prevPhase!=='starting' || S.round!==prevRound)){
+    _localPhase='starting'; _clicked=false;
+    startCd();
+  } else if(newPhase==='quoi' && _localPhase!=='quoi'){
+    _localPhase='quoi';
+    _quoiAt = S.quoiAt;
+    stopCd();
+    renderQuoi();
+  } else if(newPhase==='result' && _localPhase!=='result'){
+    _localPhase='result';
+    stopCd();
+    renderResult();
+  } else if(newPhase==='final' && _localPhase!=='final'){
+    _localPhase='final';
+    stopCd();
+    renderFinal();
+  }
+}
+
+// ════════════════════════════════════════════════════
+// HOME / LOBBY
+// ════════════════════════════════════════════════════
+function goHome(){ show('home'); }
+function goLobby(){
+  const p = document.getElementById('inp-pseudo').value.trim();
+  if(!p){ toast('Entre ton pseudo !'); return; }
+  S.pseudo = p;
+  document.getElementById('lby-pseudo').textContent = p;
+  show('lobby');
+}
+function createRoom(){
+  if(!fb()){ toast('Firebase non prêt, réessaie…'); return; }
+  S.code=code5(); S.myId=uid(); S.isHost=true;
+  S.players=[{id:S.myId,pseudo:S.pseudo,isHost:true,online:true,lastSeen:Date.now()}];
+  S.phase='waiting'; S.round=1; S.totalRounds=5;
+  S.clicks={}; S.scores={}; S.roundResults=[]; S.quoiAt=0;
+  fb().set(S.code, roomData()).catch(e=>toast('Erreur Firebase : '+e.message));
+  startListen();
+  show('waiting'); renderWaiting();
+}
+function joinRoom(){
+  if(!fb()){ toast('Firebase non prêt, réessaie…'); return; }
+  const c = document.getElementById('inp-code').value.trim().toUpperCase();
+  if(c.length!==5){ toast('Code de 5 caractères requis'); return; }
+  toast('Connexion…');
+  fb().get(c).then(d=>{
+    if(!d){ toast('Room introuvable !'); return; }
+    S.code=c; S.isHost=false; S.myId=uid();
+    // Appliquer l'état actuel de la room
+    S.players = d.players||[];
+    S.phase = d.phase||'waiting';
+    S.round = d.round||1;
+    S.totalRounds = d.totalRounds||5;
+    S.scores = d.scores||{};
+    // S'ajouter à la liste
+    const newP = {id:S.myId,pseudo:S.pseudo,isHost:false,online:true,lastSeen:Date.now()};
+    S.players.push(newP);
+    // Update partiel : juste s'ajouter
+    const idx = S.players.length-1;
+    fb().update(S.code,{['players/'+idx]: clean(newP)}).catch(()=>{});
+    startListen();
+    show('waiting'); renderWaiting();
+  }).catch(()=>toast('Erreur de connexion'));
+}
+function leaveRoom(){
+  S.players = S.players.filter(p=>p.id!==S.myId);
+  if(S.players.length>0){ if(S.isHost) S.players[0].isHost=true; fb().set(S.code,roomData()).catch(()=>{}); }
+  else fb().remove(S.code).catch(()=>{});
+  stopListen(); S.code=''; show('lobby');
+}
+function goHomeFromGame(){
+  S.players = S.players.filter(p=>p.id!==S.myId);
+  if(S.players.length>0) fb().set(S.code,roomData()).catch(()=>{});
+  else fb().remove(S.code).catch(()=>{});
+  stopListen(); S.code=''; show('home');
+}
+function copyCode(){
+  navigator.clipboard?.writeText(S.code).then(()=>toast('Code copié ! 📋')).catch(()=>toast('Code : '+S.code));
+}
+
+// ════════════════════════════════════════════════════
+// WAITING SCREEN
+// ════════════════════════════════════════════════════
+function renderWaiting(){
+  document.getElementById('w-code').textContent = S.code;
+  document.getElementById('w-codisp').textContent = S.code;
+  document.getElementById('w-pseudo').textContent = S.pseudo;
+  document.getElementById('w-pcount').textContent = S.players.length;
+  document.getElementById('w-plist').innerHTML = S.players.map(p=>`
+    <div class="pchip ${p.isHost?'host':''}">
+      <div class="pd"></div>
+      <span>${esc(p.pseudo)}${p.isHost?' 👑':''}</span>
+    </div>`).join('');
+  if(S.isHost){
+    document.getElementById('host-cfg').style.display='';
+    document.getElementById('guest-wait').style.display='none';
+    document.getElementById('cfg-rounds').textContent = S.totalRounds;
+    const ok = S.players.length >= 2;
+    document.getElementById('launch-btn').disabled = !ok;
+    document.getElementById('launch-hint').style.display = ok ? 'none' : '';
+  } else {
+    document.getElementById('host-cfg').style.display='none';
+    document.getElementById('guest-wait').style.display='';
+  }
+}
+function chgRounds(d){ S.totalRounds=Math.max(1,Math.min(20,S.totalRounds+d)); document.getElementById('cfg-rounds').textContent=S.totalRounds; }
+
+// ════════════════════════════════════════════════════
+// LOGIQUE JEU HÔTE
+// ════════════════════════════════════════════════════
+function launchGame(){
+  if(S.players.length<2){ toast('Il faut au moins 2 joueurs !'); return; }
+  S.scores={}; S.players.forEach(p=>{ S.scores[p.id]=0; });
+  S.round=1; _clicked=false;
+  startRound();
+}
+
+function startRound(){
+  S.phase='starting'; S.clicks={}; S.quoiAt=0; S.roundResults=[];
+  // Afficher le jeu côté hôte immédiatement
+  show('game');
+  document.getElementById('g-round').textContent = S.round;
+  document.getElementById('g-total').textContent = S.totalRounds;
+  document.getElementById('g-pseudo').textContent = S.pseudo;
+  _localPhase='starting'; _clicked=false;
+  startCd(); // countdown local pour l'hôte aussi
+  // Push Firebase pour les guests
+  fb().set(S.code, roomData()).catch(()=>{});
+  // Après 3s countdown + délai aléatoire → QUOI
+  const delay = 3000 + 1500 + Math.random()*4500;
+  _hostQuoiTmr = setTimeout(()=>{
+    S.phase='quoi';
+    S.quoiAt = Date.now();
+    S.clicks = {};
+    _quoiAt = S.quoiAt; // l'hôte utilise aussi sa variable locale
+    _localPhase='quoi';
+    stopCd();
+    renderQuoi();
+    fb().set(S.code, roomData()).catch(()=>{});
+    // timeout 8s si personne ne clique
+    _hostEndTmr = setTimeout(()=>{ if(S.phase==='quoi') endRound(); }, 8000);
+  }, delay);
+}
+
+function checkAllClicked(){
+  const real = S.players.filter(p=>!p.kicked);
+  if(real.length>0 && real.every(p=>S.clicks[p.id]!=null)) endRound();
+}
+
+function endRound(){
+  clearTimeout(_hostEndTmr);
+  if(!S.quoiAt || !Object.keys(S.clicks).length){
+    S.roundResults=[];
+  } else {
+    const results = Object.entries(S.clicks)
+      .map(([id,ms])=>{ const p=S.players.find(x=>x.id===id); return{id,pseudo:p?p.pseudo:'?',ms:Math.max(0,ms)}; })
+      .sort((a,b)=>a.ms-b.ms);
+    const n = S.players.length;
+    results.forEach((r,i)=>{ S.scores[r.id]=(S.scores[r.id]||0)+Math.max(0,n-i); });
+    S.roundResults = results;
+  }
+  S.phase='result'; _localPhase='result';
+  renderResult();
+  fb().set(S.code, roomData()).catch(()=>{});
+  setTimeout(()=>{
+    if(S.round>=S.totalRounds){
+      S.phase='final'; _localPhase='final';
+      renderFinal();
+      fb().set(S.code, roomData()).catch(()=>{});
+    } else {
+      S.round++; startRound();
+    }
+  },4000);
+}
+
+// ════════════════════════════════════════════════════
+// CLIC FEUR (tous les clients)
+// ════════════════════════════════════════════════════
+function handleFeur(e){
+  e.preventDefault();
+  if(S.phase!=='quoi' || _clicked || !_quoiAt) return;
+  _clicked = true;
+  const ms = Date.now() - _quoiAt; // temps de réaction local précis
+  S.clicks[S.myId] = ms;
+  // Feedback immédiat
+  renderQuoi();
+  // Push mon clic (update partiel)
+  fb().update(S.code,{['clicks/'+S.myId]: ms}).catch(()=>{});
+  // Si hôte, vérifier si tout le monde a cliqué
+  if(S.isHost) checkAllClicked();
+}
+
+// ════════════════════════════════════════════════════
+// COUNTDOWN LOCAL
+// ════════════════════════════════════════════════════
+function startCd(){
+  stopCd(); _cd=3; renderCd(_cd);
+  _cdTmr=setInterval(()=>{ _cd--; if(_cd>0) renderCd(_cd); else { stopCd(); _localPhase='tension'; renderTension(); } },1000);
+}
+function stopCd(){ clearInterval(_cdTmr); _cdTmr=null; }
+
+// ════════════════════════════════════════════════════
+// RENDERS
+// ════════════════════════════════════════════════════
+const gc = ()=>document.getElementById('gc');
+
+function renderCd(n){
+  gc().innerHTML=`<div class="game-zone"><div class="cd-num">${n}</div><div class="tension-msg">Préparez-vous…</div></div>`;
+}
+function renderTension(){
+  gc().innerHTML=`
+    <div class="game-zone">
+      <div class="tension-msg">Restez concentrés…</div>
+      <div class="wait-dots"><div class="wd"></div><div class="wd"></div><div class="wd"></div></div>
+      ${scoresMini()}
+    </div>`;
+}
+function renderQuoi(){
+  gc().innerHTML=`
+    <div class="game-zone">
+      <div class="quoi-word">QUOI ?</div>
+      ${_clicked
+        ? `<div class="feur-done">✅ Cliqué !</div>`
+        : `<button class="feur-btn" id="feur-btn" ontouchstart="handleFeur(event)" onclick="handleFeur(event)">FEUR !</button>`
+      }
+    </div>`;
+}
+function renderResult(){
+  const res = Array.isArray(S.roundResults)?S.roundResults:[];
+  const w = res[0];
+  gc().innerHTML=`
+    <div class="result-zone">
+      ${w
+        ?`<div class="winner-label">🏆 Le plus rapide du round ${S.round}</div>
+          <div class="winner-name">${esc(w.pseudo||'?')}</div>
+          <div class="winner-time">${w.ms} ms</div>`
+        :`<div class="winner-label" style="font-size:1.1rem">Personne n'a cliqué 😴</div>`
+      }
+      <div class="podium mt2">
+        ${res.map((r,i)=>`
+          <div class="prow ${i===0?'first':''}">
+            <div class="prank">${['🥇','🥈','🥉'][i]||i+1+'.'}</div>
+            <div class="pname">${esc(r.pseudo||'?')}</div>
+            <div class="ptime">${r.ms} ms</div>
+            <div class="ppts">+${Math.max(0,S.players.length-i)} pts</div>
+          </div>`).join('')}
+      </div>
+      <div class="tm mt2">${S.round<S.totalRounds?'Prochain round dans quelques secondes…':'Calcul du classement…'}</div>
+    </div>`;
+}
+function renderFinal(){
+  const sorted = Object.entries(S.scores)
+    .map(([id,pts])=>{const p=S.players.find(x=>x.id===id);return{pseudo:p?p.pseudo:'?',pts};})
+    .sort((a,b)=>b.pts-a.pts);
+  const w = sorted[0];
+  gc().innerHTML=`
+    <div class="result-zone">
+      <div class="trophy-em">🏆</div>
+      <div class="trophy-title">${w?esc(w.pseudo):'???'}</div>
+      <div class="trophy-sub">gagne avec ${w?w.pts:0} point${w&&w.pts>1?'s':''}</div>
+      <div class="podium mt2">
+        ${sorted.map((r,i)=>`
+          <div class="prow ${i===0?'first':''}">
+            <div class="prank">${['🥇','🥈','🥉'][i]||i+1+'.'}</div>
+            <div class="pname">${esc(r.pseudo)}</div>
+            <div class="ppts">${r.pts} pts</div>
+          </div>`).join('')}
+      </div>
+      ${S.isHost
+        ?`<div class="mt3" style="width:100%;max-width:420px"><div class="btn-row"><button class="btn btn-p" onclick="replayGame()">🔄 Rejouer</button><button class="btn btn-g" onclick="goHomeFromGame()">← Quitter</button></div></div>`
+        :`<div class="mt3" style="width:100%;max-width:420px"><button class="btn btn-g" onclick="goHomeFromGame()">← Quitter</button></div><div class="tm mt2">En attente de l'hôte…</div>`
+      }
+    </div>`;
+}
+function scoresMini(){
+  if(!S.scores||!Object.keys(S.scores).length) return '';
+  const s=Object.entries(S.scores).map(([id,pts])=>{const p=S.players.find(x=>x.id===id);return{pseudo:p?p.pseudo:'?',pts};}).sort((a,b)=>b.pts-a.pts);
+  return `<div class="scores mt3">${s.map(r=>`<div class="srow"><div class="sname">${esc(r.pseudo)}</div><div class="spts">${r.pts} pts</div></div>`).join('')}</div>`;
+}
+
+function replayGame(){
+  S.scores={}; S.players.forEach(p=>{S.scores[p.id]=0;}); S.round=1; _clicked=false; startRound();
+}
+</script>
+</body>
+</html>
