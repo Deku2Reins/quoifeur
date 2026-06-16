@@ -6,7 +6,7 @@
 <title>QUOI ? — Le jeu de réactivité</title>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, onValue, get, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getDatabase, ref, set, update, onValue, get, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
   const firebaseConfig = {
     apiKey: "AIzaSyCED7Y1jL7h5DoKOexArZNiB7PgOaSY6KA",
     authDomain: "quoifeur-5c9ff.firebaseapp.com",
@@ -22,6 +22,11 @@
   window._fbGet = (code) => get(ref(db, 'rooms/' + code)).then(s => s.val());
   window._fbRemove = (code) => remove(ref(db, 'rooms/' + code));
   window._fbListen = (code, cb) => onValue(ref(db, 'rooms/' + code), snap => cb(snap.val()));
+  window._fbUpdate = (code, data) => {
+    const updates = {};
+    Object.entries(data).forEach(([k,v]) => { updates['rooms/' + code + '/' + k] = v; });
+    return update(ref(db), updates);
+  };
   window._fbReady = true;
   document.dispatchEvent(new Event('firebase-ready'));
 </script>
@@ -384,14 +389,17 @@ function buildRD(){
 // ══════════ SYNC FIREBASE ══════════
 function startSync(){
   stopSync();
-  // heartbeat léger toutes les 4s : juste le lastSeen du joueur
+  // heartbeat : update partiel uniquement (ne touche pas les autres champs)
   _heartbeat=setInterval(()=>{
-    if(!ST.code||!lastCache)return;
-    const d=JSON.parse(lastCache);
-    const p=d.players&&d.players.find(x=>x.id===ST.myId);
-    if(p){p.lastSeen=Date.now();p.online=true;}
-    window._fbSet(ST.code,cleanForFB(d)).catch(()=>{});
-    lastCache=JSON.stringify(d);
+    if(!ST.code)return;
+    // Trouver l'index du joueur dans la liste et mettre à jour son lastSeen
+    const idx=ST.players.findIndex(x=>x.id===ST.myId);
+    if(idx>=0){
+      ST.players[idx].lastSeen=Date.now();
+      ST.players[idx].online=true;
+      // update partiel : ne touche que le joueur concerné
+      window._fbUpdate(ST.code,{['players/'+idx+'/lastSeen']:ST.players[idx].lastSeen,['players/'+idx+'/online']:true}).catch(()=>{});
+    }
   },4000);
 
   // listener Firebase : reçoit les events hôte
@@ -751,12 +759,23 @@ function joinRoom(){
   window._fbGet(c).then(d=>{
     if(!d){toast('Room introuvable !');return;}
     ST.code=c;ST.isHost=false;
-    onServerUpdate(d);
+    // Appliquer l'état de la room sans déclencher dispatch (on n'est pas encore syncé)
+    ST.players=d.players||[];
+    ST.phase=d.phase||'waiting';
+    ST.round=d.round||1;
+    ST.totalRounds=d.totalRounds||5;
+    ST.scores=d.scores||{};
+    // Ajouter le nouveau joueur
     ST.myId=uid();
-    ST.players.push({id:ST.myId,pseudo:ST.pseudo,isHost:false,online:true,lastSeen:Date.now()});
-    const rd=buildRD();lastCache=JSON.stringify(rd);
-    startSync();show('waiting');renderWaiting();
-    fbPush(rd);
+    const newPlayer={id:ST.myId,pseudo:ST.pseudo,isHost:false,online:true,lastSeen:Date.now()};
+    ST.players.push(newPlayer);
+    // Update partiel sur Firebase : juste ajouter le joueur à la liste
+    const idx=ST.players.length-1;
+    lastCache=JSON.stringify(buildRD());
+    startSync();
+    // Push uniquement le nouveau joueur en update partiel
+    window._fbUpdate(ST.code,{['players/'+idx]:cleanForFB(newPlayer)}).catch(()=>{});
+    show('waiting');renderWaiting();
   }).catch(()=>toast('Erreur de connexion'));
 }
 function leaveRoom(){
